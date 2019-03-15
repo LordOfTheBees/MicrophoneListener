@@ -1,96 +1,97 @@
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
+package com.example.myapplication;
 
-import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioInputStream;
-import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.DataLine;
-import javax.sound.sampled.LineUnavailableException;
-import javax.sound.sampled.SourceDataLine;
-import javax.sound.sampled.TargetDataLine;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
+import android.media.MediaSyncEvent;
+import android.util.Log;
 
 public class MicrophoneListener {
-    private final int CHUNK_SIZE = 2048;
 
-    private boolean stopThread = true;
-    private  AudioFormat format;
+    private final int SAMPLE_DELAY = 50;
+    private final int SAMPLE_RATE = 44100;
 
-    private byte[] data;
+    private byte[] buffer;
 
-    public MicrophoneListener(float sampleRate, int sampleSizeInBits, int channels, int arraySizeForSave){
-        format = new AudioFormat(sampleRate, sampleSizeInBits, channels, true, true);
-        data = new byte[arraySizeForSave];
+    private int innerBufferSize;
+    private AudioRecord audioRecorder;
+
+    private boolean stopThread;
+
+    public MicrophoneListener(int bufferSizeCallback) {
+        audioRecorder = findAudioRecord();
+
+        buffer = new byte[bufferSizeCallback];
     }
 
-    public void setAudioFormat(float sampleRate, int sampleSizeInBits,
-                               int channels, boolean signed, boolean bigEndian){
-        format = new AudioFormat(sampleRate, sampleSizeInBits, channels, signed, bigEndian);
+    public AudioFormat GetFormat() {
+        return audioRecorder.getFormat();
     }
 
-    public AudioFormat getAudioFormat(){
-        return format;
-    }
-
-    public void start(MicrophoneCallback callback) throws Exception {
-        if (!stopThread) throw new Exception("Microphone already start");
-
+    public void start(final MicrophoneCallback callback) {
         stopThread = false;
-
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
-                try {
-                    TargetDataLine microphone = AudioSystem.getTargetDataLine(format);
+                int numBytesRead;
+                int bytesRead = 0;
+                int i = 0;
+                int currentPosition = 0;
 
-                    DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
-                    microphone = (TargetDataLine) AudioSystem.getLine(info);
-                    microphone.open(format);
+                byte[] tmpData = new byte[innerBufferSize];
 
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    int numBytesRead;
 
-                    byte[] tmpData = new byte[CHUNK_SIZE];
-                    microphone.start();
+                audioRecorder.startRecording();
 
-                    int bytesRead = 0;
-                    int i = 0;
-                    int currentPosition = 0;
+                while (!stopThread) {
+                    try {
+                        Thread.sleep(SAMPLE_DELAY);
+                    } catch (InterruptedException ie) {
+                        ie.printStackTrace();
+                    }
+                    i = 0;
+                    numBytesRead = audioRecorder.read(tmpData, 0, innerBufferSize);
 
-                    while (!stopThread) { // Just so I can test if recording
-                        try {
-                            // my mic works...
-                            numBytesRead = microphone.read(tmpData, 0, CHUNK_SIZE);
-                            for (i = 0; i < numBytesRead && currentPosition < data.length; ++i) {
-                                data[currentPosition++] = tmpData[i];
-                            }
+                    while(i < numBytesRead){
+                        buffer[currentPosition++] = tmpData[i++];
 
-                            if (currentPosition == data.length) {
-                                callback.onNewData(data);
-                                currentPosition = 0;
-                            }
-
-                            for (; i < numBytesRead && currentPosition < data.length; ++i) {
-                                data[currentPosition++] = tmpData[i];
-                            }
-                        } catch (Exception e) {
-                            e.printStackTrace();
+                        if (currentPosition == buffer.length) {
+                            callback.onNewData(buffer);
+                            currentPosition = 0;
                         }
                     }
-
-                    microphone.close();
-                } catch (LineUnavailableException e) {
-                    e.printStackTrace();
-                } finally {
-                    stopThread = true;
                 }
+
+                stopThread = true;
+                audioRecorder.stop();
             }
         });
+
         thread.start();
     }
 
-    public void stop(){
+    public void stop() {
         stopThread = true;
+    }
+
+    public AudioRecord findAudioRecord() {
+        for (int rate : new int[]{44100, 22050, 11025, 8000}) {
+            for (short audioFormat : new short[]{AudioFormat.ENCODING_PCM_8BIT, AudioFormat.ENCODING_PCM_16BIT}) {
+                try {
+                    innerBufferSize = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, audioFormat);
+
+                    if (innerBufferSize != AudioRecord.ERROR_BAD_VALUE) {
+                        // check if we can instantiate and have a success
+                        AudioRecord recorder = new AudioRecord(MediaRecorder.AudioSource.DEFAULT, rate, AudioFormat.CHANNEL_IN_MONO, audioFormat, innerBufferSize);
+
+                        if (recorder.getState() == AudioRecord.STATE_INITIALIZED)
+                            return recorder;
+                    }
+                } catch (Exception e) {
+                }
+
+            }
+        }
+        return null;
     }
 }

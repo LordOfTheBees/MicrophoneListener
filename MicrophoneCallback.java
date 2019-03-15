@@ -1,5 +1,5 @@
-import javax.sound.sampled.LineUnavailableException;
+package com.example.myapplication;
 
-public interface MicrophoneCallback{
+public interface MicrophoneCallback {
     void onNewData(byte[] data);
 }
